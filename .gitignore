@@ -1,0 +1,17 @@
+# macOS
+.DS_Store
+
+# Xcode user state (window layout, breakpoints, last scheme)
+xcuserdata/
+*.xcuserstate
+
+# Build artifacts
+DerivedData/
+build/
+
+# AI assistant config
+.claude/
+
+# Local development secrets (if ever needed)
+Secrets.xcconfig
+*.env
