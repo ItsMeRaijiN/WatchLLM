@@ -2,7 +2,6 @@ import Foundation
 import Security
 
 /// Minimal Keychain wrapper for storing API keys.
-/// Keys live in the hardware-encrypted system keychain, never in source or UserDefaults.
 enum KeychainStore {
     private static let service = "WatchLLM"
 
