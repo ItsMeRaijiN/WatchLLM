@@ -37,8 +37,6 @@ final class ChatViewModel {
     }
 
     init() {
-        // One-time key provisioning from Xcode: add e.g. `-claudeKey <key>` to the scheme's
-        // launch arguments, run once, then REMOVE it (the scheme file is committed to git).
         let keyArguments = [
             "-claudeKey": AnthropicService.keychainAccount,
             "-geminiKey": GeminiService.keychainAccount,
