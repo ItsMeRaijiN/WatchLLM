@@ -149,8 +149,6 @@ struct ModelPickerView: View {
     }
 }
 
-/// Per-provider settings: API key entry (with a stored-key fingerprint,
-/// so a mangled paste is easy to spot) plus model selection.
 struct ProviderSection: View {
     let provider: LLMModel
     let account: String
