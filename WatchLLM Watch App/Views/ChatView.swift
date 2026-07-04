@@ -120,6 +120,22 @@ struct ModelPickerView: View {
                 }
             }
 
+            ProviderSection(
+                provider: .claude,
+                account: AnthropicService.keychainAccount,
+                hint: "Klucz z console.anthropic.com."
+            )
+            ProviderSection(
+                provider: .gemini,
+                account: GeminiService.keychainAccount,
+                hint: "Klucz z aistudio.google.com."
+            )
+            ProviderSection(
+                provider: .chatGPT,
+                account: OpenAIService.keychainAccount,
+                hint: "Klucz z platform.openai.com."
+            )
+
             Section {
                 Button(role: .destructive) {
                     onClear()
@@ -130,6 +146,54 @@ struct ModelPickerView: View {
             }
         }
         .navigationTitle("Ustawienia")
+    }
+}
+
+/// Per-provider settings: API key entry (with a stored-key fingerprint,
+/// so a mangled paste is easy to spot) plus model selection.
+struct ProviderSection: View {
+    let provider: LLMModel
+    let account: String
+    let hint: String
+    @State private var key: String
+    @State private var modelChoice: String
+
+    init(provider: LLMModel, account: String, hint: String) {
+        self.provider = provider
+        self.account = account
+        self.hint = hint
+        _key = State(initialValue: KeychainStore.load(account: account) ?? "")
+        _modelChoice = State(initialValue: ModelPreference.current(for: provider))
+    }
+
+    var body: some View {
+        Section {
+            TextField("Wklej klucz…", text: $key)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .onChange(of: key) {
+                    KeychainStore.save(key, account: account)
+                }
+
+            Picker("Model", selection: $modelChoice) {
+                ForEach(provider.availableModels, id: \.self) { name in
+                    Text(name).font(.footnote)
+                }
+            }
+            .onChange(of: modelChoice) {
+                ModelPreference.set(modelChoice, for: provider)
+            }
+        } header: {
+            Text(provider.rawValue)
+        } footer: {
+            Text(footerText)
+        }
+    }
+
+    private var footerText: String {
+        let stored = KeychainStore.load(account: account) ?? ""
+        guard !stored.isEmpty else { return hint }
+        return "Klucz: \(stored.prefix(6))… (\(stored.count) znaków)"
     }
 }
 

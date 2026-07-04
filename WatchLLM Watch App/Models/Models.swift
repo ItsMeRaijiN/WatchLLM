@@ -14,6 +14,15 @@ enum LLMModel: String, CaseIterable, Identifiable, Codable {
         case .chatGPT: .green
         }
     }
+
+    /// Model IDs selectable in settings; the first entry is the default.
+    var availableModels: [String] {
+        switch self {
+        case .claude: ["claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"]
+        case .gemini: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"]
+        case .chatGPT: ["gpt-5.1", "gpt-5-mini", "gpt-5-nano"]
+        }
+    }
 }
 
 struct ChatMessage: Identifiable, Equatable, Codable {

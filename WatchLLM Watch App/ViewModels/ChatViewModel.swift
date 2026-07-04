@@ -13,7 +13,17 @@ final class ChatViewModel {
     }
     var isThinking = false
 
-    private let service: LLMService = StubLLMService()
+    private let anthropic = AnthropicService()
+    private let gemini = GeminiService()
+    private let openAI = OpenAIService()
+
+    private func service(for model: LLMModel) -> LLMService {
+        switch model {
+        case .claude: anthropic
+        case .gemini: gemini
+        case .chatGPT: openAI
+        }
+    }
 
     private static let storeURL: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -27,6 +37,20 @@ final class ChatViewModel {
     }
 
     init() {
+        // One-time key provisioning from Xcode: add e.g. `-claudeKey <key>` to the scheme's
+        // launch arguments, run once, then REMOVE it (the scheme file is committed to git).
+        let keyArguments = [
+            "-claudeKey": AnthropicService.keychainAccount,
+            "-geminiKey": GeminiService.keychainAccount,
+            "-openaiKey": OpenAIService.keychainAccount,
+        ]
+        for (flag, account) in keyArguments {
+            if let index = CommandLine.arguments.firstIndex(of: flag),
+               CommandLine.arguments.indices.contains(index + 1) {
+                KeychainStore.save(CommandLine.arguments[index + 1], account: account)
+            }
+        }
+
         if let data = try? Data(contentsOf: Self.storeURL),
            let saved = try? JSONDecoder().decode(SavedState.self, from: data) {
             messages = saved.messages
@@ -50,7 +74,7 @@ final class ChatViewModel {
         Task {
             defer { isThinking = false }
             do {
-                let answer = try await service.reply(to: messages, using: model)
+                let answer = try await service(for: model).reply(to: messages, using: model)
                 messages.append(ChatMessage(role: .assistant, text: answer, model: model))
                 WKInterfaceDevice.current().play(.success)
             } catch {
