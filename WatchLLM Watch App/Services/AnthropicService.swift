@@ -11,7 +11,7 @@ struct AnthropicService: LLMService {
 
         let body = AnthropicRequest(
             model: ModelPreference.current(for: model),
-            maxTokens: 1024,
+            maxTokens: 16000,
             system: WatchLLMPrompt.system,
             messages: conversation.map {
                 AnthropicMessage(role: $0.role == .user ? "user" : "assistant", content: $0.text)

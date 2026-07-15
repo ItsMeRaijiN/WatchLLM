@@ -12,6 +12,9 @@ final class ChatViewModel {
         didSet { persist() }
     }
     var isThinking = false
+    private static let contextLimit = 10
+
+    private var replyTask: Task<Void, Never>?
 
     private let anthropic = AnthropicService()
     private let gemini = GeminiService()
@@ -68,25 +71,41 @@ final class ChatViewModel {
         messages.append(ChatMessage(role: .user, text: trimmed))
         isThinking = true
         let model = selectedModel
+        let context = requestContext()
 
-        Task {
+        replyTask = Task {
             defer { isThinking = false }
             do {
-                let answer = try await service(for: model).reply(to: messages, using: model)
+                let answer = try await service(for: model).reply(to: context, using: model)
+                guard !Task.isCancelled else { return }
                 messages.append(ChatMessage(role: .assistant, text: answer, model: model))
                 WKInterfaceDevice.current().play(.success)
             } catch {
+                guard !Task.isCancelled else { return }
                 messages.append(ChatMessage(
                     role: .assistant,
                     text: "Błąd: \(error.localizedDescription)",
-                    model: model
+                    model: model,
+                    isError: true
                 ))
                 WKInterfaceDevice.current().play(.failure)
             }
         }
     }
 
+    /// Last messages without error bubbles; must start with a user turn (API requirement).
+    private func requestContext() -> [ChatMessage] {
+        var context = Array(messages.filter { $0.isError != true }.suffix(Self.contextLimit))
+        while context.first?.role == .assistant {
+            context.removeFirst()
+        }
+        return context
+    }
+
     func clear() {
+        replyTask?.cancel()
+        replyTask = nil
+        isThinking = false
         messages.removeAll()
     }
 

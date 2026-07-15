@@ -38,6 +38,11 @@ struct ChatView: View {
                     proxy.scrollTo(bottomID, anchor: .bottom)
                 }
             }
+            .onChange(of: viewModel.isThinking) {
+                withAnimation {
+                    proxy.scrollTo(bottomID, anchor: .bottom)
+                }
+            }
         }
         .navigationTitle("WatchLLM")
         .toolbar {
