@@ -1,6 +1,6 @@
 # WatchLLM
 
-Apple Watch (watchOS 10+) chat client for **Claude**, **Gemini** and **OpenAI/ChatGPT**.
+Apple Watch (watchOS 10+) chat client for **Claude**, **Gemini** and **ChatGPT**.
 
 All three providers are wired to their real APIs: Claude (Anthropic Messages API),
 Gemini (`generateContent`, free tier at [aistudio.google.com](https://aistudio.google.com))
@@ -9,18 +9,15 @@ in the watch Keychain.
 
 ## Architecture
 
-This is intentionally a **watch-only** app. No model runs on Apple Watch: the app
-sends HTTPS requests to each provider and only displays the response. watchOS may
-route that network traffic through the paired iPhone, Wi-Fi, or cellular, but the
-iPhone does not run a companion process and `WatchConnectivity` is not used.
+This is intentionally a **watch-only** app. The app sends HTTPS requests to each 
+provider and only displays the response. watchOS may route that network traffic 
+through the paired iPhone, Wi-Fi, or cellular, but the iPhone does not run a companion
+process and `WatchConnectivity` is not used.
 
 That is the smallest reliable architecture for a personal app. A companion iOS app
 would mainly make key entry and settings easier; it would also make live requests
 depend on the iPhone app being reachable. For an App Store or multi-user product,
 use your own backend instead of distributing provider secrets to client devices.
-
-API access is billed separately from consumer Claude, Gemini, or ChatGPT
-subscriptions.
 
 ## Usage
 
