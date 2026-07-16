@@ -1,7 +1,7 @@
 import Foundation
 import Security
 
-/// Minimal Keychain wrapper for storing API keys.
+
 enum KeychainStore {
     private static let service = "WatchLLM"
 
@@ -13,16 +13,37 @@ enum KeychainStore {
         ]
     }
 
-    /// Saves the value, replacing any previous one. An empty value deletes the entry.
-    static func save(_ value: String, account: String) {
-        SecItemDelete(baseQuery(account: account) as CFDictionary)
 
+    @discardableResult
+    static func save(_ value: String, account: String) -> Bool {
         let sanitized = value.filter { !$0.isWhitespace }
-        guard !sanitized.isEmpty else { return }
+        guard !sanitized.isEmpty else { return delete(account: account) }
+
+        let data = Data(sanitized.utf8)
+        let updateStatus = SecItemUpdate(
+            baseQuery(account: account) as CFDictionary,
+            [
+                kSecValueData as String: data,
+                kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+            ] as CFDictionary
+        )
+        if updateStatus == errSecSuccess {
+            return true
+        }
+        guard updateStatus == errSecItemNotFound else {
+            return false
+        }
 
         var query = baseQuery(account: account)
-        query[kSecValueData as String] = Data(sanitized.utf8)
-        SecItemAdd(query as CFDictionary, nil)
+        query[kSecValueData as String] = data
+        query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        return SecItemAdd(query as CFDictionary, nil) == errSecSuccess
+    }
+
+    @discardableResult
+    static func delete(account: String) -> Bool {
+        let status = SecItemDelete(baseQuery(account: account) as CFDictionary)
+        return status == errSecSuccess || status == errSecItemNotFound
     }
 
     static func load(account: String) -> String? {

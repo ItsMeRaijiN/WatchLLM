@@ -15,12 +15,19 @@ enum LLMModel: String, CaseIterable, Identifiable, Codable {
         }
     }
 
-    /// Model IDs selectable in settings; the first entry is the default.
+    var shortName: String {
+        switch self {
+        case .claude: "CL"
+        case .gemini: "GE"
+        case .chatGPT: "GPT"
+        }
+    }
+
     var availableModels: [String] {
         switch self {
-        case .claude: ["claude-opus-4-8", "claude-fable-5", "claude-sonnet-5", "claude-haiku-4-5"]
-        case .gemini: ["gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite"]
-        case .chatGPT: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]
+        case .claude: ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-4-8", "claude-fable-5"]
+        case .gemini: ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.1-pro-preview"]
+        case .chatGPT: ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]
         }
     }
 }
@@ -35,14 +42,22 @@ struct ChatMessage: Identifiable, Equatable, Codable {
     let role: Role
     let text: String
     let model: LLMModel?
-    /// Error bubbles are shown in the chat but never sent back to the API.
     let isError: Bool?
+    let finishReason: LLMFinishReason?
 
-    init(role: Role, text: String, model: LLMModel? = nil, isError: Bool = false) {
-        self.id = UUID()
+    init(
+        id: UUID = UUID(),
+        role: Role,
+        text: String,
+        model: LLMModel? = nil,
+        isError: Bool = false,
+        finishReason: LLMFinishReason? = nil
+    ) {
+        self.id = id
         self.role = role
         self.text = text
         self.model = model
         self.isError = isError
+        self.finishReason = finishReason
     }
 }

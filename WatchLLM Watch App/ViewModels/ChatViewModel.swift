@@ -12,13 +12,30 @@ final class ChatViewModel {
         didSet { persist() }
     }
     var isThinking = false
+    private(set) var respondingModel: LLMModel?
+    private(set) var streamingText = ""
+    private var streamingMessageID: UUID?
     private static let contextLimit = 10
 
     private var replyTask: Task<Void, Never>?
+    private var requestID: UUID?
 
     private let anthropic = AnthropicService()
     private let gemini = GeminiService()
     private let openAI = OpenAIService()
+
+    var streamingMessage: ChatMessage? {
+        guard let id = streamingMessageID,
+              let model = respondingModel,
+              !streamingText.isEmpty else { return nil }
+        return ChatMessage(id: id, role: .assistant, text: streamingText, model: model)
+    }
+
+    var canContinueLastResponse: Bool {
+        guard !isThinking,
+              let message = messages.last(where: { $0.isError != true }) else { return false }
+        return message.role == .assistant && message.finishReason == .maxTokens
+    }
 
     private func service(for model: LLMModel) -> LLMService {
         switch model {
@@ -64,24 +81,91 @@ final class ChatViewModel {
         }
     }
 
-    func send(_ text: String) {
+    @discardableResult
+    func send(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !isThinking else { return }
+        guard !trimmed.isEmpty, !isThinking else { return false }
 
         messages.append(ChatMessage(role: .user, text: trimmed))
-        isThinking = true
         let model = selectedModel
         let context = requestContext()
+        return startRequest(context: context, model: model)
+    }
+
+    @discardableResult
+    func continueLastResponse() -> Bool {
+        guard canContinueLastResponse,
+              let last = messages.last(where: { $0.isError != true }) else { return false }
+
+        var context = requestContext()
+        context.append(ChatMessage(
+            role: .user,
+            text: "Continue exactly where the previous response stopped. Do not repeat earlier text. Reply in the same language as the preceding response."
+        ))
+        return startRequest(context: context, model: last.model ?? selectedModel)
+    }
+
+    func stop() {
+        guard isThinking else { return }
+        replyTask?.cancel()
+    }
+
+    private func startRequest(context: [ChatMessage], model: LLMModel) -> Bool {
+        guard !isThinking else { return false }
+
+        isThinking = true
+        respondingModel = model
+        streamingText = ""
+        streamingMessageID = UUID()
+        let id = UUID()
+        requestID = id
 
         replyTask = Task {
-            defer { isThinking = false }
+            defer {
+                if requestID == id {
+                    isThinking = false
+                    respondingModel = nil
+                    streamingText = ""
+                    streamingMessageID = nil
+                    requestID = nil
+                    replyTask = nil
+                }
+            }
             do {
-                let answer = try await service(for: model).reply(to: context, using: model)
-                guard !Task.isCancelled else { return }
-                messages.append(ChatMessage(role: .assistant, text: answer, model: model))
+                let stream = try service(for: model).streamReply(to: context, using: model)
+                var didFinish = false
+
+                for try await event in stream {
+                    guard requestID == id else { return }
+                    switch event {
+                    case .textDelta(let delta):
+                        streamingText += delta
+                    case .finished(let reason):
+                        if reason == .refused,
+                           streamingText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            throw LLMAPIError(message: "\(model.rawValue) odmówił odpowiedzi.")
+                        }
+                        guard finalizeStreamingResponse(reason: reason) else {
+                            throw LLMAPIError(message: "\(model.rawValue) zwrócił pustą odpowiedź.")
+                        }
+                        didFinish = true
+                    }
+                }
+
+                guard didFinish else {
+                    throw LLMAPIError(message: "Strumień zakończył się bez pełnej odpowiedzi.")
+                }
                 WKInterfaceDevice.current().play(.success)
             } catch {
-                guard !Task.isCancelled else { return }
+                guard requestID == id else { return }
+
+                if Task.isCancelled || error is CancellationError {
+                    _ = finalizeStreamingResponse(reason: .stopped)
+                    WKInterfaceDevice.current().play(.click)
+                    return
+                }
+
+                _ = finalizeStreamingResponse(reason: .interrupted)
                 messages.append(ChatMessage(
                     role: .assistant,
                     text: "Błąd: \(error.localizedDescription)",
@@ -91,9 +175,25 @@ final class ChatViewModel {
                 WKInterfaceDevice.current().play(.failure)
             }
         }
+        return true
     }
 
-    /// Last messages without error bubbles; must start with a user turn (API requirement).
+    private func finalizeStreamingResponse(reason: LLMFinishReason) -> Bool {
+        let text = streamingText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return false }
+
+        messages.append(ChatMessage(
+            id: streamingMessageID ?? UUID(),
+            role: .assistant,
+            text: text,
+            model: respondingModel,
+            finishReason: reason
+        ))
+        streamingText = ""
+        streamingMessageID = nil
+        return true
+    }
+
     private func requestContext() -> [ChatMessage] {
         var context = Array(messages.filter { $0.isError != true }.suffix(Self.contextLimit))
         while context.first?.role == .assistant {
@@ -103,9 +203,13 @@ final class ChatViewModel {
     }
 
     func clear() {
+        requestID = nil
         replyTask?.cancel()
         replyTask = nil
         isThinking = false
+        respondingModel = nil
+        streamingText = ""
+        streamingMessageID = nil
         messages.removeAll()
     }
 

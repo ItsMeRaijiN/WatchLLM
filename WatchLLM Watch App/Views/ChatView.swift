@@ -4,6 +4,7 @@ struct ChatView: View {
     @State private var viewModel = ChatViewModel()
     @State private var draft = ""
     @State private var showingModelPicker = false
+    @State private var streamingScrollTask: Task<Void, Never>?
 
     private let bottomID = "bottom"
 
@@ -19,10 +20,23 @@ struct ChatView: View {
                         MessageBubble(message: message)
                     }
 
+                    if viewModel.canContinueLastResponse {
+                        Button {
+                            viewModel.continueLastResponse()
+                        } label: {
+                            Label("Kontynuuj", systemImage: "arrow.down.circle")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    if let streamingMessage = viewModel.streamingMessage {
+                        MessageBubble(message: streamingMessage)
+                    }
+
                     if viewModel.isThinking {
                         HStack(spacing: 6) {
                             ProgressView()
-                            Text("\(viewModel.selectedModel.rawValue) pisze…")
+                            Text("\(viewModel.respondingModel?.rawValue ?? "Model") pisze…")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }
@@ -43,6 +57,19 @@ struct ChatView: View {
                     proxy.scrollTo(bottomID, anchor: .bottom)
                 }
             }
+            .onChange(of: viewModel.streamingText) {
+                guard streamingScrollTask == nil else { return }
+                streamingScrollTask = Task { @MainActor in
+                    defer { streamingScrollTask = nil }
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    guard !Task.isCancelled else { return }
+                    proxy.scrollTo(bottomID, anchor: .bottom)
+                }
+            }
+            .onDisappear {
+                streamingScrollTask?.cancel()
+                streamingScrollTask = nil
+            }
         }
         .navigationTitle("WatchLLM")
         .toolbar {
@@ -50,10 +77,11 @@ struct ChatView: View {
                 Button {
                     showingModelPicker = true
                 } label: {
-                    Text(String(viewModel.selectedModel.rawValue.prefix(1)))
-                        .font(.headline)
+                    Text(viewModel.selectedModel.shortName)
+                        .font(.caption.bold())
                         .foregroundStyle(viewModel.selectedModel.tint)
                 }
+                .accessibilityLabel("Model i ustawienia: \(viewModel.selectedModel.rawValue)")
             }
         }
         .sheet(isPresented: $showingModelPicker) {
@@ -80,20 +108,30 @@ struct ChatView: View {
             TextField("Prompt…", text: $draft)
                 .onSubmit(sendDraft)
 
-            Button(action: sendDraft) {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.title3)
-                    .foregroundStyle(viewModel.selectedModel.tint)
+            if viewModel.isThinking {
+                Button(action: viewModel.stop) {
+                    Image(systemName: "stop.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.red)
+                }
+                .accessibilityLabel("Zatrzymaj odpowiedź")
+                .buttonStyle(.plain)
+            } else {
+                Button(action: sendDraft) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(viewModel.selectedModel.tint)
+                }
+                .buttonStyle(.plain)
+                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-            .buttonStyle(.plain)
-            .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                      || viewModel.isThinking)
         }
     }
 
     private func sendDraft() {
-        viewModel.send(draft)
-        draft = ""
+        if viewModel.send(draft) {
+            draft = ""
+        }
     }
 }
 
@@ -128,7 +166,7 @@ struct ModelPickerView: View {
             ProviderSection(
                 provider: .claude,
                 account: AnthropicService.keychainAccount,
-                hint: "Klucz z console.anthropic.com."
+                hint: "Klucz z platform.claude.com."
             )
             ProviderSection(
                 provider: .gemini,
@@ -158,25 +196,36 @@ struct ProviderSection: View {
     let provider: LLMModel
     let account: String
     let hint: String
-    @State private var key: String
+    @State private var key = ""
     @State private var modelChoice: String
+    @State private var hasStoredKey: Bool
+    @State private var keyStatus: String?
 
     init(provider: LLMModel, account: String, hint: String) {
         self.provider = provider
         self.account = account
         self.hint = hint
-        _key = State(initialValue: KeychainStore.load(account: account) ?? "")
+        _hasStoredKey = State(initialValue: KeychainStore.load(account: account) != nil)
         _modelChoice = State(initialValue: ModelPreference.current(for: provider))
     }
 
     var body: some View {
         Section {
-            TextField("Wklej klucz…", text: $key)
+            SecureField(hasStoredKey ? "Wklej nowy klucz…" : "Wklej klucz…", text: $key)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
-                .onChange(of: key) {
-                    KeychainStore.save(key, account: account)
+                .onSubmit(saveKey)
+
+            Button(action: saveKey) {
+                Label(hasStoredKey ? "Zastąp klucz" : "Zapisz klucz", systemImage: "key.fill")
+            }
+            .disabled(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+            if hasStoredKey {
+                Button(role: .destructive, action: deleteKey) {
+                    Label("Usuń klucz", systemImage: "trash")
                 }
+            }
 
             Picker("Model", selection: $modelChoice) {
                 ForEach(provider.availableModels, id: \.self) { name in
@@ -194,9 +243,29 @@ struct ProviderSection: View {
     }
 
     private var footerText: String {
-        let stored = KeychainStore.load(account: account) ?? ""
-        guard !stored.isEmpty else { return hint }
-        return "Klucz: \(stored.prefix(6))… (\(stored.count) znaków)"
+        if let keyStatus { return keyStatus }
+        return hasStoredKey ? "Klucz zapisany w Keychain." : hint
+    }
+
+    private func saveKey() {
+        guard !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        if KeychainStore.save(key, account: account) {
+            key = ""
+            hasStoredKey = true
+            keyStatus = "Klucz zapisany w Keychain."
+        } else {
+            keyStatus = "Nie udało się zapisać klucza."
+        }
+    }
+
+    private func deleteKey() {
+        if KeychainStore.delete(account: account) {
+            key = ""
+            hasStoredKey = false
+            keyStatus = "Klucz usunięty."
+        } else {
+            keyStatus = "Nie udało się usunąć klucza."
+        }
     }
 }
 

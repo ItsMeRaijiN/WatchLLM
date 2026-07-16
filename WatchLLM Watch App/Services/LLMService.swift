@@ -4,11 +4,29 @@ import Foundation
 ///   - Gemini:  POST https://generativelanguage.googleapis.com/v1beta/models/...:generateContent
 ///   - ChatGPT: POST https://api.openai.com/v1/responses
 protocol LLMService {
-    func reply(to conversation: [ChatMessage], using model: LLMModel) async throws -> String
+    func streamReply(
+        to conversation: [ChatMessage],
+        using model: LLMModel
+    ) throws -> AsyncThrowingStream<LLMStreamEvent, Error>
 }
 
-/// Shared system prompt: keeps answers readable on a watch screen.
+enum LLMStreamEvent {
+    case textDelta(String)
+    case finished(LLMFinishReason)
+}
+
+enum LLMFinishReason: String, Codable {
+    case completed
+    case maxTokens
+    case stopped
+    case interrupted
+    case refused
+    case other
+}
+
 enum WatchLLMPrompt {
+    static let maxOutputTokens = 8_192
+
     static let system = """
     You are replying on an Apple Watch screen. Be concise — a few sentences unless \
     the user explicitly asks for more. Plain text only: no Markdown, no LaTeX, \
@@ -17,7 +35,6 @@ enum WatchLLMPrompt {
     """
 }
 
-/// Human-readable error surfaced in the chat bubble.
 struct LLMAPIError: LocalizedError {
     let message: String
     var errorDescription: String? { message }
@@ -30,7 +47,6 @@ enum ModelPreference {
 
     static func current(for provider: LLMModel) -> String {
         let stored = UserDefaults.standard.string(forKey: key(for: provider))
-        // Ignore stale values that are no longer on the list.
         if let stored, provider.availableModels.contains(stored) {
             return stored
         }
