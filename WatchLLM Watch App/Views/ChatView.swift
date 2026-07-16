@@ -2,9 +2,11 @@ import SwiftUI
 
 struct ChatView: View {
     @State private var viewModel = ChatViewModel()
-    @State private var draft = ""
+    @AppStorage("promptDraft") private var draft = ""
     @State private var showingModelPicker = false
+    @State private var showingConversations = false
     @State private var streamingScrollTask: Task<Void, Never>?
+    @Environment(\.scenePhase) private var scenePhase
 
     private let bottomID = "bottom"
 
@@ -29,8 +31,17 @@ struct ChatView: View {
                         .buttonStyle(.bordered)
                     }
 
+                    if viewModel.canRetryLastRequest {
+                        Button {
+                            viewModel.retryLastRequest()
+                        } label: {
+                            Label("Ponów", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
                     if let streamingMessage = viewModel.streamingMessage {
-                        MessageBubble(message: streamingMessage)
+                        MessageBubble(message: streamingMessage, isStreaming: true)
                     }
 
                     if viewModel.isThinking {
@@ -70,9 +81,24 @@ struct ChatView: View {
                 streamingScrollTask?.cancel()
                 streamingScrollTask = nil
             }
+            .onAppear {
+                scrollToBottom(using: proxy)
+            }
+            .onChange(of: scenePhase) {
+                guard scenePhase == .active else { return }
+                scrollToBottom(using: proxy)
+            }
         }
         .navigationTitle("WatchLLM")
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    showingConversations = true
+                } label: {
+                    Image(systemName: "bubble.left.and.bubble.right")
+                }
+                .accessibilityLabel("Rozmowy")
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     showingModelPicker = true
@@ -85,9 +111,15 @@ struct ChatView: View {
             }
         }
         .sheet(isPresented: $showingModelPicker) {
-            ModelPickerView(selected: $viewModel.selectedModel) {
+            ModelPickerView(
+                selected: $viewModel.selectedModel,
+                isThinking: viewModel.isThinking
+            ) {
                 viewModel.clear()
             }
+        }
+        .sheet(isPresented: $showingConversations) {
+            ConversationListView(viewModel: viewModel)
         }
     }
 
@@ -133,10 +165,84 @@ struct ChatView: View {
             draft = ""
         }
     }
+
+    private func scrollToBottom(using proxy: ScrollViewProxy) {
+        Task { @MainActor in
+            await Task.yield()
+            proxy.scrollTo(bottomID, anchor: .bottom)
+        }
+    }
+}
+
+struct ConversationListView: View {
+    let viewModel: ChatViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Button {
+                        if viewModel.newConversation() {
+                            dismiss()
+                        }
+                    } label: {
+                        Label("Nowa rozmowa", systemImage: "plus")
+                    }
+                    .disabled(viewModel.isThinking)
+                }
+
+                Section("Historia") {
+                    if viewModel.sortedConversations.isEmpty {
+                        Text("Brak zapisanych rozmów")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(viewModel.sortedConversations) { conversation in
+                            Button {
+                                if viewModel.selectConversation(conversation.id) {
+                                    dismiss()
+                                }
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(conversation.title)
+                                            .lineLimit(2)
+                                        Text("\(conversation.messages.count) wiadomości")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    if conversation.id == viewModel.selectedConversationID {
+                                        Image(systemName: "checkmark")
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                            .disabled(viewModel.isThinking)
+                        }
+                        .onDelete { offsets in
+                            let conversations = viewModel.sortedConversations
+                            for offset in offsets {
+                                viewModel.deleteConversation(conversations[offset].id)
+                            }
+                        }
+                    }
+                }
+
+                if viewModel.isThinking {
+                    Text("Zatrzymaj odpowiedź, aby zmienić rozmowę.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("Rozmowy")
+        }
+    }
 }
 
 struct ModelPickerView: View {
     @Binding var selected: LLMModel
+    let isThinking: Bool
     let onClear: () -> Void
     @Environment(\.dismiss) private var dismiss
 
@@ -184,7 +290,14 @@ struct ModelPickerView: View {
                     onClear()
                     dismiss()
                 } label: {
-                    Label("Wyczyść rozmowę", systemImage: "trash")
+                    Label("Usuń bieżącą rozmowę", systemImage: "trash")
+                }
+                .disabled(isThinking)
+
+                if isThinking {
+                    Text("Zatrzymaj odpowiedź, aby wyczyścić rozmowę.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
             }
         }

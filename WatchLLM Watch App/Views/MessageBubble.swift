@@ -1,7 +1,17 @@
 import SwiftUI
 
+enum MessageMarkdown {
+    static func render(_ text: String) -> AttributedString {
+        (try? AttributedString(
+            markdown: text,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        )) ?? AttributedString(text)
+    }
+}
+
 struct MessageBubble: View {
     let message: ChatMessage
+    var isStreaming = false
 
     var body: some View {
         switch message.role {
@@ -20,7 +30,7 @@ struct MessageBubble: View {
                         .font(.caption2)
                         .foregroundStyle(model.tint)
                 }
-                Text(message.text)
+                Text(assistantText)
                     .font(.footnote)
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -31,6 +41,13 @@ struct MessageBubble: View {
                     Text(statusText)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                }
+
+                if let usageText {
+                    Text(usageText)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .accessibilityLabel("Zużycie tokenów: \(usageText)")
                 }
             }
         }
@@ -48,5 +65,28 @@ struct MessageBubble: View {
         case .refused: "Model odmówił odpowiedzi"
         default: nil
         }
+    }
+
+    private var assistantText: AttributedString {
+        guard !isStreaming, message.isError != true else {
+            return AttributedString(message.text)
+        }
+        return MessageMarkdown.render(message.text)
+    }
+
+    private var usageText: String? {
+        guard let usage = message.usage else { return nil }
+        var parts: [String] = []
+        if let input = usage.inputTokens {
+            parts.append("\(input) wej.")
+        }
+        if let output = usage.outputTokens {
+            parts.append("\(output) wyj.")
+        }
+        if let total = usage.totalTokens,
+           total != (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0) {
+            parts.append("\(total) razem")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 }

@@ -31,11 +31,14 @@ struct GeminiService: LLMService {
         request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
         request.httpBody = try JSONEncoder().encode(body)
 
-        let events = SSEClient.events(for: request) { status, data in
+        let events = SSEClient.events(for: request) { response, data in
             if let apiError = try? JSONDecoder().decode(GeminiErrorResponse.self, from: data) {
-                return LLMAPIError(message: "Gemini (\(status)): \(apiError.error.message)")
+                return LLMAPIError.http(
+                    message: "Gemini (\(response.statusCode)): \(apiError.error.message)",
+                    response: response
+                )
             }
-            return LLMAPIError(message: "Gemini: HTTP \(status)")
+            return LLMAPIError.http(message: "Gemini: HTTP \(response.statusCode)", response: response)
         }
 
         return AsyncThrowingStream { continuation in
@@ -43,13 +46,20 @@ struct GeminiService: LLMService {
                 do {
                     var didFinish = false
                     var didEmitText = false
+                    var usage: TokenUsage?
                     for try await event in events {
                         try Task.checkCancellation()
                         guard String(data: event.data, encoding: .utf8) != "[DONE]" else { continue }
                         if let apiError = try? JSONDecoder().decode(GeminiErrorResponse.self, from: event.data) {
-                            throw LLMAPIError(message: "Gemini: \(apiError.error.message)")
+                            throw LLMAPIError(
+                                message: "Gemini: \(apiError.error.message)",
+                                isRetryable: apiError.error.code.map(RetryPolicy.isRetryableHTTPStatus) ?? false
+                            )
                         }
                         let chunk = try JSONDecoder().decode(GeminiStreamChunk.self, from: event.data)
+                        if let metadata = chunk.usageMetadata {
+                            usage = metadata.tokenUsage
+                        }
                         guard let candidate = chunk.candidates?.first else { continue }
 
                         for part in candidate.content?.parts ?? [] where part.thought != true {
@@ -63,7 +73,7 @@ struct GeminiService: LLMService {
                             if reason != "STOP", reason != "MAX_TOKENS", !didEmitText {
                                 throw LLMAPIError(message: "Gemini: \(candidate.finishMessage ?? reason)")
                             }
-                            continuation.yield(.finished(Self.mapFinishReason(reason)))
+                            continuation.yield(.finished(reason: Self.mapFinishReason(reason), usage: usage))
                             didFinish = true
                         }
                     }
@@ -128,10 +138,26 @@ private struct GeminiStreamChunk: Decodable {
         let finishMessage: String?
     }
     let candidates: [Candidate]?
+    let usageMetadata: UsageMetadata?
+
+    struct UsageMetadata: Decodable {
+        let promptTokenCount: Int?
+        let candidatesTokenCount: Int?
+        let totalTokenCount: Int?
+
+        var tokenUsage: TokenUsage {
+            TokenUsage(
+                inputTokens: promptTokenCount,
+                outputTokens: candidatesTokenCount,
+                totalTokens: totalTokenCount
+            )
+        }
+    }
 }
 
 private struct GeminiErrorResponse: Decodable {
     struct Err: Decodable {
+        let code: Int?
         let message: String
     }
     let error: Err

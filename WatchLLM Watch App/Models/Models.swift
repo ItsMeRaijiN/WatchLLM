@@ -44,6 +44,7 @@ struct ChatMessage: Identifiable, Equatable, Codable {
     let model: LLMModel?
     let isError: Bool?
     let finishReason: LLMFinishReason?
+    let usage: TokenUsage?
 
     init(
         id: UUID = UUID(),
@@ -51,7 +52,8 @@ struct ChatMessage: Identifiable, Equatable, Codable {
         text: String,
         model: LLMModel? = nil,
         isError: Bool = false,
-        finishReason: LLMFinishReason? = nil
+        finishReason: LLMFinishReason? = nil,
+        usage: TokenUsage? = nil
     ) {
         self.id = id
         self.role = role
@@ -59,5 +61,41 @@ struct ChatMessage: Identifiable, Equatable, Codable {
         self.model = model
         self.isError = isError
         self.finishReason = finishReason
+        self.usage = usage
+    }
+}
+
+struct TokenUsage: Equatable, Codable {
+    let inputTokens: Int?
+    let outputTokens: Int?
+    let totalTokens: Int?
+
+    init(inputTokens: Int? = nil, outputTokens: Int? = nil, totalTokens: Int? = nil) {
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.totalTokens = totalTokens
+    }
+
+    var isEmpty: Bool {
+        inputTokens == nil && outputTokens == nil && totalTokens == nil
+    }
+}
+
+struct ChatConversation: Identifiable, Equatable, Codable {
+    let id: UUID
+    var title: String
+    var messages: [ChatMessage]
+    var updatedAt: Date
+
+    init(
+        id: UUID = UUID(),
+        title: String = "Nowa rozmowa",
+        messages: [ChatMessage] = [],
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.title = title
+        self.messages = messages
+        self.updatedAt = updatedAt
     }
 }

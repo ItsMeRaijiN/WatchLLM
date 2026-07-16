@@ -27,7 +27,13 @@ use your own backend instead of distributing provider secrets to client devices.
 3. Enter a prompt and send it. The answer is displayed as it streams in; use the
    red Stop button to keep the partial response and cancel generation.
 4. If a provider reaches the output limit, use Continue to resume without repeating
-   the previous text. The last ten non-error messages are used as context.
+   the previous text.
+5. Use the conversations button to start, switch, or delete independent chats.
+
+Final responses render lightweight Markdown and show provider-reported token usage.
+Transient failures are retried once before any response text arrives; interrupted
+partial responses can only be retried manually. Context is trimmed in complete
+user/assistant turns to a 32,000-character budget.
 
 Defaults favor lower latency and cost. Responses have a generous 8,192-token ceiling;
 the system prompt still asks for concise answers unless the user requests more detail.
@@ -38,8 +44,10 @@ the system prompt still asks for concise answers unless the user requests more d
 ```
 WatchLLM Watch App/
 ├── WatchLLMApp.swift          # entry point
-├── Models/Models.swift        # LLMModel, ChatMessage
+├── Models/                    # messages, conversations, context budgeting
 ├── Services/                  # LLMService protocol, Anthropic/Gemini/OpenAI clients, KeychainStore
 ├── ViewModels/ChatViewModel.swift
 └── Views/                     # ChatView, MessageBubble
+
+WatchLLMTests/                 # SSE, retry and context regression tests
 ```

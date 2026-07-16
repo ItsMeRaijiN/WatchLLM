@@ -30,12 +30,15 @@ struct OpenAIService: LLMService {
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONEncoder().encode(body)
 
-        let events = SSEClient.events(for: request) { status, data in
+        let events = SSEClient.events(for: request) { response, data in
             if let apiError = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data),
                let message = apiError.error?.message {
-                return LLMAPIError(message: "ChatGPT (\(status)): \(message)")
+                return LLMAPIError.http(
+                    message: "ChatGPT (\(response.statusCode)): \(message)",
+                    response: response
+                )
             }
-            return LLMAPIError(message: "ChatGPT: HTTP \(status)")
+            return LLMAPIError.http(message: "ChatGPT: HTTP \(response.statusCode)", response: response)
         }
 
         return AsyncThrowingStream { continuation in
@@ -63,16 +66,28 @@ struct OpenAIService: LLMService {
                                 didEmitText = true
                             }
                         case "response.completed":
-                            continuation.yield(.finished(.completed))
+                            continuation.yield(.finished(
+                                reason: .completed,
+                                usage: decoded.response?.usage?.tokenUsage
+                            ))
                             didFinish = true
                         case "response.incomplete":
                             let reason: LLMFinishReason = decoded.response?.incompleteDetails?.reason == "max_output_tokens"
                                 ? .maxTokens : .other
-                            continuation.yield(.finished(reason))
+                            continuation.yield(.finished(
+                                reason: reason,
+                                usage: decoded.response?.usage?.tokenUsage
+                            ))
                             didFinish = true
                         case "response.failed", "error":
                             let message = decoded.response?.error?.message ?? decoded.message ?? "błąd strumienia"
-                            throw LLMAPIError(message: "ChatGPT: \(message)")
+                            let code = decoded.response?.error?.code ?? decoded.code
+                            throw LLMAPIError(
+                                message: "ChatGPT: \(message)",
+                                isRetryable: code.map {
+                                    ["server_error", "rate_limit_exceeded", "overloaded"].contains($0)
+                                } ?? false
+                            )
                         default:
                             break
                         }
@@ -117,14 +132,30 @@ private struct OpenAIStreamEvent: Decodable {
             let reason: String?
         }
         struct StreamError: Decodable {
+            let code: String?
             let message: String?
+        }
+        struct Usage: Decodable {
+            let inputTokens: Int?
+            let outputTokens: Int?
+            let totalTokens: Int?
+
+            var tokenUsage: TokenUsage {
+                TokenUsage(
+                    inputTokens: inputTokens,
+                    outputTokens: outputTokens,
+                    totalTokens: totalTokens
+                )
+            }
         }
         let incompleteDetails: IncompleteDetails?
         let error: StreamError?
+        let usage: Usage?
     }
     let type: String
     let delta: String?
     let text: String?
+    let code: String?
     let message: String?
     let response: Response?
 }

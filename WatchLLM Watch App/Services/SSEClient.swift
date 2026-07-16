@@ -6,7 +6,7 @@ struct SSEEvent {
 }
 
 enum SSEClient {
-    typealias HTTPErrorFactory = (_ status: Int, _ data: Data) -> Error
+    typealias HTTPErrorFactory = (_ response: HTTPURLResponse, _ data: Data) -> Error
 
     static func events(
         for request: URLRequest,
@@ -25,7 +25,7 @@ enum SSEClient {
                         for try await byte in bytes {
                             errorData.append(byte)
                         }
-                        throw httpError(http.statusCode, errorData)
+                        throw httpError(http, errorData)
                     }
 
                     var lineDecoder = SSELineDecoder()

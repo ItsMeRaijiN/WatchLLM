@@ -34,11 +34,14 @@ struct AnthropicService: LLMService {
         encoder.keyEncodingStrategy = .convertToSnakeCase
         request.httpBody = try encoder.encode(body)
 
-        let events = SSEClient.events(for: request) { status, data in
+        let events = SSEClient.events(for: request) { response, data in
             if let apiError = try? JSONDecoder().decode(AnthropicErrorResponse.self, from: data) {
-                return LLMAPIError(message: "Claude (\(status)): \(apiError.error.message)")
+                return LLMAPIError.http(
+                    message: "Claude (\(response.statusCode)): \(apiError.error.message)",
+                    response: response
+                )
             }
-            return LLMAPIError(message: "Claude: HTTP \(status)")
+            return LLMAPIError.http(message: "Claude: HTTP \(response.statusCode)", response: response)
         }
 
         return AsyncThrowingStream { continuation in
@@ -47,6 +50,7 @@ struct AnthropicService: LLMService {
                     let decoder = JSONDecoder()
                     decoder.keyDecodingStrategy = .convertFromSnakeCase
                     var finishReason: LLMFinishReason?
+                    var usage: TokenUsage?
                     var didFinish = false
 
                     for try await event in events {
@@ -55,17 +59,29 @@ struct AnthropicService: LLMService {
                         let decoded = try decoder.decode(AnthropicStreamEvent.self, from: event.data)
 
                         switch decoded.type {
+                        case "message_start":
+                            usage = decoded.message?.usage?.tokenUsage
                         case "content_block_delta":
                             if decoded.delta?.type == "text_delta", let text = decoded.delta?.text, !text.isEmpty {
                                 continuation.yield(.textDelta(text))
                             }
                         case "message_delta":
                             finishReason = Self.mapFinishReason(decoded.delta?.stopReason)
+                            if let deltaUsage = decoded.usage?.tokenUsage {
+                                usage = TokenUsage(
+                                    inputTokens: usage?.inputTokens ?? deltaUsage.inputTokens,
+                                    outputTokens: deltaUsage.outputTokens ?? usage?.outputTokens,
+                                    totalTokens: nil
+                                )
+                            }
                         case "message_stop":
-                            continuation.yield(.finished(finishReason ?? .other))
+                            continuation.yield(.finished(reason: finishReason ?? .other, usage: usage))
                             didFinish = true
                         case "error":
-                            throw LLMAPIError(message: "Claude: \(decoded.error?.message ?? "błąd strumienia")")
+                            throw LLMAPIError(
+                                message: "Claude: \(decoded.error?.message ?? "błąd strumienia")",
+                                isRetryable: decoded.error?.type == "overloaded_error"
+                            )
                         default:
                             break
                         }
@@ -115,11 +131,35 @@ private struct AnthropicStreamEvent: Decodable {
         let stopReason: String?
     }
     struct StreamError: Decodable {
+        let type: String?
         let message: String
+    }
+    struct Message: Decodable {
+        let usage: Usage?
+    }
+    struct Usage: Decodable {
+        let inputTokens: Int?
+        let outputTokens: Int?
+        let cacheCreationInputTokens: Int?
+        let cacheReadInputTokens: Int?
+
+        var tokenUsage: TokenUsage {
+            let inputParts = [inputTokens, cacheCreationInputTokens, cacheReadInputTokens].compactMap { $0 }
+            let input = inputParts.isEmpty ? nil : inputParts.reduce(0, +)
+            let total: Int?
+            if let input, let outputTokens {
+                total = input + outputTokens
+            } else {
+                total = nil
+            }
+            return TokenUsage(inputTokens: input, outputTokens: outputTokens, totalTokens: total)
+        }
     }
     let type: String
     let delta: Delta?
     let error: StreamError?
+    let message: Message?
+    let usage: Usage?
 }
 
 private struct AnthropicErrorResponse: Decodable {
